@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Checa</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--txt:#e8eaed;--dim:#9aa3b2;--ac:#4f8cff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.5 -apple-system,Roboto,sans-serif;padding:20px 16px 60px;max-width:640px;margin-inline:auto}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:22px}
+label{display:block;font-size:13px;color:var(--dim);margin:16px 0 6px}
+input,textarea{width:100%;background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;font-size:15px}
+textarea{min-height:110px}
+button{width:100%;margin-top:18px;padding:14px;border:0;border-radius:10px;background:var(--ac);color:#fff;font:inherit;font-weight:600;font-size:16px}
+button:disabled{opacity:.5}
+.sec{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:24px;display:none}
+.sec.on{display:block}
+#saida{white-space:pre-wrap}
+#fontes{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:13px;color:var(--dim)}
+#fontes a{color:var(--ac);text-decoration:none;display:block;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cp{background:#2a2f3a;margin-top:14px;font-size:14px;padding:11px}
+.erro{color:#ff8080}
+details{margin-top:26px}
+summary{color:var(--dim);font-size:13px}
+</style>
+</head>
+<body>
+<h1>Checa</h1>
+<div class="sub">Cole um comentário. Recebe o dado, com fonte.</div>
+
+<label for="comentario">Comentário</label>
+<textarea id="comentario" placeholder="Cole aqui o comentário"></textarea>
+
+<label for="pergunta">Sua pergunta (opcional)</label>
+<input id="pergunta" placeholder="isso é verdade?">
+
+<button id="btn">Checar</button>
+
+<div class="sec" id="resultado">
+  <div id="saida"></div>
+  <div id="fontes"></div>
+  <button class="cp" id="copiar">Copiar resposta</button>
+</div>
+
+<details>
+  <summary>Configurar chave da API</summary>
+  <label for="chave">Chave do Google AI Studio</label>
+  <input id="chave" type="password" placeholder="AIza...">
+</details>
+
+<script>
+const MODELO = "gemini-2.5-flash";
+
+const INSTRUCAO = `Você analisa comentários de redes sociais em português do Brasil, geralmente políticos. Sua função é mostrar o dado, não julgar quem escreveu.
+
+REGRAS
+1. Separe o que é verificável (números, datas, eventos, declarações) do que é causa, opinião ou previsão.
+2. Busque sempre o dado atualizado antes de responder. Nunca escreva um número de memória.
+3. Priorize fontes oficiais: ibge.gov.br, bcb.gov.br, ipea.gov.br, tse.jus.br, gov.br. Cite pelo nome apenas o órgão que você realmente leu. Se o dado só apareceu em site secundário, diga qual site.
+4. Sobre relações de causa, não dê veredito. Diga em uma frase que é disputado e por quê.
+5. Se não encontrar dado confiável, diga que não encontrou. Nunca estime.
+6. Não corrija a pessoa, não use ironia, não conclua se ela está certa ou errada.
+7. Todo número deve vir com o período a que se refere. Se o comentário não define período, escolha o recorte mais recente e diga qual usou.
+8. Em temas judiciais, descreva a situação processual (investigação, denúncia, condenação, instância, se cabe recurso) sem adjetivos.
+9. Se o comentário usar termos absolutos ("nunca", "sempre", "nenhum"), verifique se há mais de um caso relevante. Se houver, nomeie ao menos um outro caso. Não use expressões vagas como "entre outros" sem especificar.
+
+FORMATO
+Máximo 3 linhas. Sem títulos, listas ou tabelas. Não use marcadores como [1] [2]. Cite a fonte pelo nome dentro da frase. Comece direto pelo dado.`;
+
+const $ = id => document.getElementById(id);
+let mem = "";
+const lerChave = () => { try { return localStorage.getItem("k") || mem } catch { return mem } };
+const gravar = v => { mem = v; try { localStorage.setItem("k", v) } catch {} };
+
+$("chave").value = lerChave();
+$("chave").oninput = e => gravar(e.target.value.trim());
+
+async function checar(){
+  const chave = lerChave(), c = $("comentario").value.trim(), p = $("pergunta").value.trim();
+  if(!chave) return erro("Falta a chave. Abra 'Configurar chave da API'.");
+  if(!c) return erro("Cole um comentário primeiro.");
+
+  $("btn").disabled = true; $("btn").textContent = "Checando...";
+  $("resultado").classList.remove("on");
+
+  const hoje = new Date().toLocaleDateString("pt-BR",{day:"numeric",month:"long",year:"numeric"});
+  let texto = `Hoje é ${hoje}.\n\nComentário: "${c}"`;
+  if(p) texto += `\n\nPergunta do usuário: ${p}`;
+
+  try{
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${chave}`,{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        systemInstruction:{parts:[{text:INSTRUCAO}]},
+        contents:[{role:"user",parts:[{text:texto}]}],
+        tools:[{google_search:{}}],
+        generationConfig:{temperature:0.3}
+      })
+    });
+    const d = await r.json();
+    if(d.error) return erro(d.error.message);
+    const cand = d.candidates?.[0];
+    const resp = (cand?.content?.parts||[]).map(x=>x.text||"").join("").trim();
+    if(!resp) return erro("Não veio resposta. Tente de novo.");
+    mostrar(resp, cand.groundingMetadata);
+  } catch(e){ erro("Falha de conexão: " + e.message) }
+  finally{ $("btn").disabled = false; $("btn").textContent = "Checar" }
+}
+
+function mostrar(txt, g){
+  $("saida").textContent = txt; $("saida").classList.remove("erro");
+  const chunks = g?.groundingChunks || [], f = $("fontes");
+  f.innerHTML = "";
+  if(chunks.length){
+    f.innerHTML = "<div>Fontes consultadas</div>";
+    const vistos = new Set();
+    chunks.forEach(x=>{
+      const t = x.web?.title, u = x.web?.uri;
+      if(!t || vistos.has(t)) return;
+      vistos.add(t);
+      const a = document.createElement("a");
+      a.href = u; a.target = "_blank"; a.rel = "noopener"; a.textContent = t;
+      f.appendChild(a);
+    });
+  } else {
+    f.innerHTML = "<div>Atenção: nenhuma busca foi feita. A resposta pode estar desatualizada.</div>";
+  }
+  $("copiar").style.display = "block";
+  $("resultado").classList.add("on");
+}
+
+function erro(m){
+  $("saida").textContent = m; $("saida").classList.add("erro");
+  $("fontes").innerHTML = ""; $("copiar").style.display = "none";
+  $("resultado").classList.add("on");
+}
+
+$("copiar").onclick = async () => {
+  try{
+    await navigator.clipboard.writeText($("saida").textContent);
+    $("copiar").textContent = "Copiado";
+    setTimeout(()=>$("copiar").textContent="Copiar resposta",1500);
+  } catch { $("copiar").textContent = "Não deu para copiar" }
+};
+
+$("btn").onclick = checar;
+</script>
+</body>
+</html>
