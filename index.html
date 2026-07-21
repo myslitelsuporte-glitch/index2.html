@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Checa</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--txt:#e8eaed;--dim:#9aa3b2;--ac:#4f8cff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.5 -apple-system,Roboto,sans-serif;padding:20px 16px 60px;max-width:640px;margin-inline:auto}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:22px}
+label{display:block;font-size:13px;color:var(--dim);margin:16px 0 6px}
+input,textarea{width:100%;background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;font-size:15px}
+textarea{min-height:110px}
+button{width:100%;margin-top:18px;padding:14px;border:0;border-radius:10px;background:var(--ac);color:#fff;font:inherit;font-weight:600;font-size:16px}
+.sec{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:24px;display:none}
+.sec.on{display:block}
+#saida{white-space:pre-wrap}
+#fontes{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:13px;color:var(--dim)}
+#fontes a{color:var(--ac);text-decoration:none;display:block;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cp{background:#2a2f3a;margin-top:14px;font-size:14px;padding:11px}
+.erro{color:#ff8080}
+#bug{background:#5c1a1a;color:#fff;padding:10px;font-size:13px;display:none;border-radius:8px;margin-bottom:14px}
+details{margin-top:26px}
+summary{color:var(--dim);font-size:13px}
+</style>
+</head>
+<body>
+<div id="bug"></div>
+<h1>Checa</h1>
+<div class="sub">Cole um comentário. Recebe o dado, com fonte.</div>
+
+<label for="comentario">Comentário</label>
+<textarea id="comentario" placeholder="Cole aqui o comentário"></textarea>
+
+<label for="pergunta">Sua pergunta (opcional)</label>
+<input id="pergunta" placeholder="isso é verdade?">
+
+<button id="btn" onclick="checar()">Checar</button>
+
+<div class="sec" id="resultado">
+  <div id="saida"></div>
+  <div id="fontes"></div>
+  <button class="cp" onclick="copiar()">Copiar resposta</button>
+</div>
+
+<details>
+  <summary>Configurar chave da API</summary>
+  <label for="chave">Chave do Google AI Studio</label>
+  <input id="chave" type="password" placeholder="cole a chave aqui" oninput="gravar(this.value)">
+</details>
+
+<script>
+window.onerror = function(m, f, l){
+  var b = document.getElementById("bug");
+  b.style.display = "block";
+  b.textContent = "Erro na linha " + l + ": " + m;
+};
+
+var MODELO = "gemini-3.6-flash";
+
+var P = [];
+P.push("Você analisa comentários de redes sociais em português do Brasil, geralmente políticos.");
+P.push("Sua função é mostrar o dado, não julgar quem escreveu.");
+P.push("");
+P.push("REGRAS");
+P.push("1. Separe o que é verificável (números, datas, eventos) do que é causa, opinião ou previsão.");
+P.push("2. Busque sempre o dado atualizado. Nunca escreva um número de memória.");
+P.push("3. Use exclusivamente fontes oficiais: ibge.gov.br, bcb.gov.br, ipea.gov.br, tse.jus.br,");
+P.push("gov.br, ou imprensa de grande circulação. É PROIBIDO usar sites de partidos, sites de");
+P.push("militância, blogs pessoais e Wikipédia. Se o dado só existir neles, diga que não encontrou.");
+P.push("4. Sobre causa, não dê veredito. Diga em uma frase que é disputado e por quê.");
+P.push("5. Se não encontrar dado confiável, diga que não encontrou. Nunca estime.");
+P.push("6. Não corrija a pessoa, não use ironia, não diga se ela está certa ou errada.");
+P.push("7. Todo número deve vir com o período. Sem período no comentário, use o dado mais recente");
+P.push("e diga qual usou.");
+P.push("8. Em temas judiciais, descreva a situação processual (investigação, denúncia, condenação,");
+P.push("instância, recurso) sem adjetivos.");
+P.push("9. Com termos absolutos (nunca, sempre), veja se há mais de um caso. Se houver, nomeie");
+P.push("ao menos um outro. Não use expressões vagas sem especificar.");
+P.push("");
+P.push("FORMATO");
+P.push("Máximo 60 palavras. Responda apenas sobre o período do comentário; sem comparações com");
+P.push("governos anteriores se não foram pedidas. Sem títulos, listas ou tabelas.");
+P.push("Não use marcadores como [1] [2]. Cite a fonte pelo nome na frase. Comece pelo dado.");
+var INSTRUCAO = P.join("\n");
+
+var mem = "";
+
+function gravar(v){
+  mem = v.trim();
+  try { localStorage.setItem("k", mem); } catch(e){}
+}
+function lerChave(){
+  try { return localStorage.getItem("k") || mem; } catch(e){ return mem; }
+}
+function el(id){ return document.getElementById(id); }
+
+function erro(m){
+  el("saida").textContent = m;
+  el("saida").className = "erro";
+  el("fontes").innerHTML = "";
+  el("resultado").className = "sec on";
+}
+
+function checar(){
+  var chave = lerChave();
+  var c = el("comentario").value.trim();
+  var p = el("pergunta").value.trim();
+
+  if(!chave){ erro("Falta a chave. Abra Configurar chave da API."); return; }
+  if(!c){ erro("Cole um comentário primeiro."); return; }
+
+  el("btn").textContent = "Checando...";
+
+  var hoje = new Date().toLocaleDateString("pt-BR");
+  var texto = "Hoje é " + hoje + ".\n\nComentário: \"" + c + "\"";
+  if(p){ texto += "\n\nPergunta do usuário: " + p; }
+
+  var url = "https://generativelanguage.googleapis.com/v1beta/models/" + MODELO + ":generateContent?key=" + chave;
+
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: INSTRUCAO }] },
+      contents: [{ role: "user", parts: [{ text: texto }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: { temperature: 0.3 }
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    el("btn").textContent = "Checar";
+    if(d.error){ erro(d.error.message); return; }
+    var cand = d.candidates && d.candidates[0];
+    if(!cand){ erro("Não veio resposta."); return; }
+    var partes = (cand.content && cand.content.parts) || [];
+    var resp = "";
+    for(var i = 0; i < partes.length; i++){ resp += partes[i].text || ""; }
+    if(!resp){ erro("Não veio resposta."); return; }
+    mostrar(resp.trim(), cand.groundingMetadata);
+  })
+  .catch(function(e){
+    el("btn").textContent = "Checar";
+    erro("Falha: " + e.message);
+  });
+}
+
+function mostrar(txt, g){
+  el("saida").textContent = txt;
+  el("saida").className = "";
+  var f = el("fontes");
+  var chunks = (g && g.groundingChunks) || [];
+  f.innerHTML = "";
+  if(chunks.length){
+    f.innerHTML = "<div>Fontes consultadas</div>";
+    var vistos = {};
+    for(var i = 0; i < chunks.length; i++){
+      var w = chunks[i].web;
+      if(!w || !w.title || vistos[w.title]) continue;
+      vistos[w.title] = 1;
+      var a = document.createElement("a");
+      a.href = w.uri; a.target = "_blank"; a.textContent = w.title;
+      f.appendChild(a);
+    }
+  } else {
+    f.innerHTML = "<div>Atenção: nenhuma busca foi feita.</div>";
+  }
+  el("resultado").className = "sec on";
+}
+
+function copiar(){
+  var t = el("saida").textContent;
+  if(navigator.clipboard){ navigator.clipboard.writeText(t); }
+}
+
+try { el("chave").value = lerChave(); } catch(e){}
+</script>
+</body>
+</html>
