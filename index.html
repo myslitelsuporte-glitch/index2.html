@@ -14,7 +14,6 @@ label{display:block;font-size:13px;color:var(--dim);margin:16px 0 6px}
 input,textarea{width:100%;background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;font-size:15px}
 textarea{min-height:110px}
 button{width:100%;margin-top:18px;padding:14px;border:0;border-radius:10px;background:var(--ac);color:#fff;font:inherit;font-weight:600;font-size:16px}
-button:disabled{opacity:.5}
 .sec{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:24px;display:none}
 .sec.on{display:block}
 #saida{white-space:pre-wrap}
@@ -36,116 +35,113 @@ summary{color:var(--dim);font-size:13px}
 <label for="pergunta">Sua pergunta (opcional)</label>
 <input id="pergunta" placeholder="isso é verdade?">
 
-<button id="btn">Checar</button>
+<button id="btn" onclick="checar()">Checar</button>
 
 <div class="sec" id="resultado">
   <div id="saida"></div>
   <div id="fontes"></div>
-  <button class="cp" id="copiar">Copiar resposta</button>
+  <button class="cp" onclick="copiar()">Copiar resposta</button>
 </div>
 
 <details>
   <summary>Configurar chave da API</summary>
   <label for="chave">Chave do Google AI Studio</label>
-  <input id="chave" type="password" placeholder="cole a chave aqui">
+  <input id="chave" type="password" placeholder="cole a chave aqui" oninput="gravar(this.value)">
 </details>
 
+<script src="prompt.js"></script>
 <script>
-const MODELO = "gemini-3.6-flash";
+var mem = "";
 
-const INSTRUCAO = `Você analisa comentários de redes sociais em português do Brasil, geralmente políticos. Sua função é mostrar o dado, não julgar quem escreveu.
+function gravar(v){
+  mem = v.trim();
+  try { localStorage.setItem("k", mem); } catch(e){}
+}
+function lerChave(){
+  try { return localStorage.getItem("k") || mem; } catch(e){ return mem; }
+}
+function el(id){ return document.getElementById(id); }
 
-REGRAS
-1. Separe o que é verificável (números, datas, eventos, declarações) do que é causa, opinião ou previsão.
-2. Busque sempre o dado atualizado antes de responder. Nunca escreva um número de memória.
-3. Use exclusivamente fontes oficiais e institucionais: ibge.gov.br, bcb.gov.br, ipea.gov.br, tse.jus.br, gov.br, ou imprensa de grande circulação. É PROIBIDO usar como fonte sites de partidos políticos, sites de militância, blogs pessoais e Wikipédia. Se o dado só existir nesses lugares, diga que não encontrou fonte confiável.
-4. Sobre relações de causa, não dê veredito. Diga em uma frase que é disputado e por quê.
-5. Se não encontrar dado confiável, diga que não encontrou. Nunca estime.
-6. Não corrija a pessoa, não use ironia, não conclua se ela está certa ou errada.
-7. Todo número deve vir com o período a que se refere. Se o comentário não define período, escolha o recorte mais recente e diga qual usou.
-8. Em temas judiciais, descreva a situação processual (investigação, denúncia, condenação, instância, se cabe recurso) sem adjetivos.
-9. Se o comentário usar termos absolutos ("nunca", "sempre", "nenhum"), verifique se há mais de um caso relevante. Se houver, nomeie ao menos um outro caso. Não use expressões vagas como "entre outros" sem especificar.
+function erro(m){
+  el("saida").textContent = m;
+  el("saida").className = "erro";
+  el("fontes").innerHTML = "";
+  el("resultado").className = "sec on";
+}
 
-FORMATO
-Máximo 60 palavras. Responda apenas sobre o período que o comentário trata; não faça comparações com governos anteriores se não foram pedidas. Sem títulos, listas ou tabelas. Não use marcadores como [1] [2]. Cite a fonte pelo nome dentro da frase. Comece direto pelo dado.`;
+function checar(){
+  var chave = lerChave();
+  var c = el("comentario").value.trim();
+  var p = el("pergunta").value.trim();
 
-const $ = id => document.getElementById(id);
-let mem = "";
-const lerChave = () => { try { return localStorage.getItem("k") || mem } catch { return mem } };
-const gravar = v => { mem = v; try { localStorage.setItem("k", v) } catch {} };
+  if(!chave){ erro("Falta a chave. Abra Configurar chave da API."); return; }
+  if(!c){ erro("Cole um comentário primeiro."); return; }
 
-$("chave").value = lerChave();
-$("chave").oninput = e => gravar(e.target.value.trim());
+  el("btn").textContent = "Checando...";
 
-async function checar(){
-  const chave = lerChave(), c = $("comentario").value.trim(), p = $("pergunta").value.trim();
-  if(!chave) return erro("Falta a chave. Abra 'Configurar chave da API'.");
-  if(!c) return erro("Cole um comentário primeiro.");
+  var hoje = new Date().toLocaleDateString("pt-BR");
+  var texto = "Hoje é " + hoje + ".\n\nComentário: \"" + c + "\"";
+  if(p){ texto += "\n\nPergunta do usuário: " + p; }
 
-  $("btn").disabled = true; $("btn").textContent = "Checando...";
-  $("resultado").classList.remove("on");
+  var url = "https://generativelanguage.googleapis.com/v1beta/models/" + MODELO + ":generateContent?key=" + chave;
 
-  const hoje = new Date().toLocaleDateString("pt-BR",{day:"numeric",month:"long",year:"numeric"});
-  let texto = `Hoje é ${hoje}.\n\nComentário: "${c}"`;
-  if(p) texto += `\n\nPergunta do usuário: ${p}`;
-
-  try{
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${chave}`,{
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({
-        systemInstruction:{parts:[{text:INSTRUCAO}]},
-        contents:[{role:"user",parts:[{text:texto}]}],
-        tools:[{google_search:{}}],
-        generationConfig:{temperature:0.3}
-      })
-    });
-    const d = await r.json();
-    if(d.error) return erro(d.error.message);
-    const cand = d.candidates?.[0];
-    const resp = (cand?.content?.parts||[]).map(x=>x.text||"").join("").trim();
-    if(!resp) return erro("Não veio resposta. Tente de novo.");
-    mostrar(resp, cand.groundingMetadata);
-  } catch(e){ erro("Falha de conexão: " + e.message) }
-  finally{ $("btn").disabled = false; $("btn").textContent = "Checar" }
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: INSTRUCAO }] },
+      contents: [{ role: "user", parts: [{ text: texto }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: { temperature: 0.3 }
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    el("btn").textContent = "Checar";
+    if(d.error){ erro(d.error.message); return; }
+    var cand = d.candidates && d.candidates[0];
+    if(!cand){ erro("Não veio resposta."); return; }
+    var partes = (cand.content && cand.content.parts) || [];
+    var resp = "";
+    for(var i = 0; i < partes.length; i++){ resp += partes[i].text || ""; }
+    if(!resp){ erro("Não veio resposta."); return; }
+    mostrar(resp.trim(), cand.groundingMetadata);
+  })
+  .catch(function(e){
+    el("btn").textContent = "Checar";
+    erro("Falha: " + e.message);
+  });
 }
 
 function mostrar(txt, g){
-  $("saida").textContent = txt; $("saida").classList.remove("erro");
-  const chunks = g?.groundingChunks || [], f = $("fontes");
+  el("saida").textContent = txt;
+  el("saida").className = "";
+  var f = el("fontes");
+  var chunks = (g && g.groundingChunks) || [];
   f.innerHTML = "";
   if(chunks.length){
     f.innerHTML = "<div>Fontes consultadas</div>";
-    const vistos = new Set();
-    chunks.forEach(x=>{
-      const t = x.web?.title, u = x.web?.uri;
-      if(!t || vistos.has(t)) return;
-      vistos.add(t);
-      const a = document.createElement("a");
-      a.href = u; a.target = "_blank"; a.rel = "noopener"; a.textContent = t;
+    var vistos = {};
+    for(var i = 0; i < chunks.length; i++){
+      var w = chunks[i].web;
+      if(!w || !w.title || vistos[w.title]) continue;
+      vistos[w.title] = 1;
+      var a = document.createElement("a");
+      a.href = w.uri; a.target = "_blank"; a.textContent = w.title;
       f.appendChild(a);
-    });
+    }
   } else {
-    f.innerHTML = "<div>Atenção: nenhuma busca foi feita. A resposta pode estar desatualizada.</div>";
+    f.innerHTML = "<div>Atenção: nenhuma busca foi feita.</div>";
   }
-  $("copiar").style.display = "block";
-  $("resultado").classList.add("on");
+  el("resultado").className = "sec on";
 }
 
-function erro(m){
-  $("saida").textContent = m; $("saida").classList.add("erro");
-  $("fontes").innerHTML = ""; $("copiar").style.display = "none";
-  $("resultado").classList.add("on");
+function copiar(){
+  var t = el("saida").textContent;
+  if(navigator.clipboard){ navigator.clipboard.writeText(t); }
 }
 
-$("copiar").onclick = async () => {
-  try{
-    await navigator.clipboard.writeText($("saida").textContent);
-    $("copiar").textContent = "Copiado";
-    setTimeout(()=>$("copiar").textContent="Copiar resposta",1500);
-  } catch { $("copiar").textContent = "Não deu para copiar" }
-};
-
-$("btn").onclick = checar;
+try { el("chave").value = lerChave(); } catch(e){}
 </script>
 </body>
 </html>
