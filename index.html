@@ -47,11 +47,11 @@ summary{color:var(--dim);font-size:13px}
 <details>
   <summary>Configurar chave da API</summary>
   <label for="chave">Chave do Google AI Studio</label>
-  <input id="chave" type="password" placeholder="AIza...">
+  <input id="chave" type="password" placeholder="cole a chave aqui">
 </details>
 
 <script>
-const MODELO = "gemini-2.5-flash";
+const MODELO = "gemini-3.6-flash";
 
 const INSTRUCAO = `Você analisa comentários de redes sociais em português do Brasil, geralmente políticos. Sua função é mostrar o dado, não julgar quem escreveu.
 
@@ -67,7 +67,7 @@ REGRAS
 9. Se o comentário usar termos absolutos ("nunca", "sempre", "nenhum"), verifique se há mais de um caso relevante. Se houver, nomeie ao menos um outro caso. Não use expressões vagas como "entre outros" sem especificar.
 
 FORMATO
-Máximo 3 linhas. Sem títulos, listas ou tabelas. Não use marcadores como [1] [2]. Cite a fonte pelo nome dentro da frase. Comece direto pelo dado.`;
+Máximo 3 linhas. Sem títulos, listas ou tabelas. Não use marcadores como [1] [2]. Cite a fonte pelo nome dentro da frase. Comece direto pelo dado. Responda apenas sobre o comentário recebido, sem comparações históricas que não foram pedidas.`;
 
 const $ = id => document.getElementById(id);
 let mem = "";
@@ -105,47 +105,4 @@ async function checar(){
     const resp = (cand?.content?.parts||[]).map(x=>x.text||"").join("").trim();
     if(!resp) return erro("Não veio resposta. Tente de novo.");
     mostrar(resp, cand.groundingMetadata);
-  } catch(e){ erro("Falha de conexão: " + e.message) }
-  finally{ $("btn").disabled = false; $("btn").textContent = "Checar" }
-}
-
-function mostrar(txt, g){
-  $("saida").textContent = txt; $("saida").classList.remove("erro");
-  const chunks = g?.groundingChunks || [], f = $("fontes");
-  f.innerHTML = "";
-  if(chunks.length){
-    f.innerHTML = "<div>Fontes consultadas</div>";
-    const vistos = new Set();
-    chunks.forEach(x=>{
-      const t = x.web?.title, u = x.web?.uri;
-      if(!t || vistos.has(t)) return;
-      vistos.add(t);
-      const a = document.createElement("a");
-      a.href = u; a.target = "_blank"; a.rel = "noopener"; a.textContent = t;
-      f.appendChild(a);
-    });
-  } else {
-    f.innerHTML = "<div>Atenção: nenhuma busca foi feita. A resposta pode estar desatualizada.</div>";
-  }
-  $("copiar").style.display = "block";
-  $("resultado").classList.add("on");
-}
-
-function erro(m){
-  $("saida").textContent = m; $("saida").classList.add("erro");
-  $("fontes").innerHTML = ""; $("copiar").style.display = "none";
-  $("resultado").classList.add("on");
-}
-
-$("copiar").onclick = async () => {
-  try{
-    await navigator.clipboard.writeText($("saida").textContent);
-    $("copiar").textContent = "Copiado";
-    setTimeout(()=>$("copiar").textContent="Copiar resposta",1500);
-  } catch { $("copiar").textContent = "Não deu para copiar" }
-};
-
-$("btn").onclick = checar;
-</script>
-</body>
-</html>
+  } catch(e){
